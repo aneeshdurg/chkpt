@@ -2,67 +2,100 @@ import sys
 import inspect
 import atexit
 import time
-from types import CodeType
-from typing import Any
+import os
 import pickle
 import urllib.parse
+from dataclasses import dataclass
+from pathlib import Path
+from types import CodeType
+from typing import Any
 
 
-def install_hooks(tracee: str):
+@dataclass
+class CheckpointArgs:
+    min_obj_size: int
+    output_dir: Path
+    frequency: int
+    verbosity: int
+
+
+def install_hooks(tracee: str, args: CheckpointArgs):
     tracee = tracee
-    min_capture_size = 100
+    min_capture_size = args.min_obj_size
+    frequency = args.frequency
+    verbosity = args.verbosity
+
+    os.system(f"mkdir -p {args.output_dir}")
 
     # TODO - custom output dir
     file_prefix = urllib.parse.quote_plus(tracee)
 
-    def log(*args):
-        # TODO - real logging with controllable verbosity
-        print(" ", *args)
+    def log(lvl, *args):
+        if verbosity >= lvl:
+            # TODO - real logging with controllable verbosity
+            print(" ", *args)
 
-    def should_capture(module_name: str) -> bool:
+    def should_capture(v: Any) -> bool:
+        sz = sys.getsizeof(v)
+        if sz < min_capture_size:
+            return False
+        m = inspect.getmodule(type(v))
+        if m is None:
+            return False
+        module_name = m.__name__
+
+        if module_name == "builtins":
+            if type(v) in [str, int, list, dict, set]:
+                return True
         return module_name.startswith("pandas") or module_name.startswith("numpy")
 
+    last_save = None
+
+    def ready_to_capture():
+        if frequency or last_save is None:
+            return True
+        now = time.time() * 1000
+        if (now - last_save) >= frequency:
+            return True
+
     def save(line_number, objs):
+        nonlocal last_save
         ts = time.time()
         fname = f"chkpt.{file_prefix}.{line_number}@{ts}.pkl"
         for k in objs:
-            log(f"[save] {k} @ {ts} -> {fname}")
-        with open(fname, "wb") as f:
+            log(1, f"  [save] {k} @ {ts} -> {fname}")
+        with open(args.output_dir / fname, "wb") as f:
             pickle.dump(objs, f)
+        last_save = ts
 
     def line_handler(code: CodeType, line_number: int) -> Any:
         if code.co_filename != tracee:
             return
-        log("[line_handler]", code, line_number)
+        log(1, "[line_handler]", code, line_number)
         try:
             cf = inspect.currentframe()
             assert cf
             assert cf.f_back
             to_save = {}
             for n, v in cf.f_back.f_globals.items():
-                m = inspect.getmodule(type(v))
-                sz = sys.getsizeof(v)
-                if (
-                    sz > min_capture_size
-                    and m is not None
-                    and should_capture(m.__name__)
-                ):
-                    if n not in to_save:
-                        to_save[n] = v
+                if should_capture(v):
+                    log(1, "  [global] add", n)
+                    to_save[n] = v
+                else:
+                    log(1, "  [global] skip", n)
             for n, v in cf.f_back.f_locals.items():
                 if n in cf.f_back.f_globals:
                     continue
-                m = inspect.getmodule(type(v))
-                sz = sys.getsizeof(v)
-                if (
-                    sz > min_capture_size
-                    and m is not None
-                    and should_capture(m.__name__)
-                ):
+                if should_capture(v):
+                    log(2, "  [local] add", n)
+                    if n in to_save:
+                        log(2, "    overwrite!", n)
                     to_save[n] = v
-                save(line_number, to_save)
-        except Exception:
-            pass
+                else:
+                    log(2, "  [local] skip", n)
+            save(line_number, to_save)
+        except Exception as e:
+            raise e
 
     sys.monitoring.use_tool_id(sys.monitoring.OPTIMIZER_ID, "dbg")
     sys.monitoring.set_events(
@@ -82,18 +115,33 @@ def install_hooks(tracee: str):
     )
     atexit.register(lambda: sys.monitoring.free_tool_id(sys.monitoring.OPTIMIZER_ID))
 
-    log("[install_hooks] hooks installed!")
+    log(1, "[install_hooks] hooks installed!")
 
 
 if __name__ == "__main__":
-    # import argparse
+    import argparse
     import importlib.machinery
     import io
-    import os
 
-    # parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--min-obj-size", "-z", type=int, default=1024 * 1024)
+    parser.add_argument("--output-dir", "-o", type=Path, default=Path("./checkpoints"))
+    parser.add_argument(
+        "--frequency", "-f", type=int, help="frequency of checkpoints in ms", default=0
+    )
+    parser.add_argument(
+        "--verbose", "-v", help="verbosity level", action="count", default=0
+    )
+    args, rest = parser.parse_known_args()
 
-    sys.argv = sys.argv[1:]
+    cargs = CheckpointArgs(
+        args.min_obj_size, args.output_dir, args.frequency, args.verbose
+    )
+
+    if rest[0] == "--":
+        rest = rest[1:]
+
+    sys.argv = rest
     # import runpy
     # if options.module:
     #     code = "run_module(modname, run_name='__main__')"
@@ -114,5 +162,5 @@ if __name__ == "__main__":
         "__cached__": None,
     }
 
-    install_hooks(progname)
+    install_hooks(progname, cargs)
     exec(code, globs, None)
