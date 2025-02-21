@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chkpt"
+version = "0.0.1"
+authors = [
+  { name="Aneesh Durg", email="aneeshdurg17@gmail.com" },
+]
+description = ""
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [ ]
+dependencies = []
+
+
+[project.urls]
+"Homepage" = "https://github.com/aneeshdurg/chkpt"
+"Bug Tracker" = "https://github.com/aneeshdurg/chkpt/issues"
+
+
+[tool.pyright]
+exclude = ["**/__pycache__"]
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+
+[tool.isort]
+profile = "black"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chkpt/"]
