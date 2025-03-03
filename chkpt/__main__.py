@@ -12,31 +12,53 @@ from typing import Any
 
 
 @dataclass
-class CheckpointArgs:
+class Checkpoint:
+    tracee: str
     min_obj_size: int
     output_dir: Path
     frequency: int
     verbosity: int
 
+    file_prefix: str = ""
+    last_save: float | None = None
 
-def install_hooks(tracee: str, args: CheckpointArgs):
-    tracee = tracee
-    min_capture_size = args.min_obj_size
-    frequency = args.frequency
-    verbosity = args.verbosity
+    def __post_init__(self):
+        self.file_prefix = urllib.parse.quote_plus(self.tracee)
 
-    os.system(f"mkdir -p {args.output_dir}")
+    def install(self):
+        os.makedirs(args.output_dir, exist_ok=True)
 
-    file_prefix = urllib.parse.quote_plus(tracee)
+        sys.monitoring.use_tool_id(sys.monitoring.OPTIMIZER_ID, "dbg")
+        sys.monitoring.set_events(
+            sys.monitoring.OPTIMIZER_ID,
+            sys.monitoring.events.PY_START
+            | sys.monitoring.events.PY_RETURN
+            | sys.monitoring.events.LINE,
+        )
+        # TODO capture at the end of execution
+        # sys.monitoring.register_callback(
+        #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_START, handler
+        # )
+        # sys.monitoring.register_callback(
+        #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_RETURN, ret_handler
+        # )
+        sys.monitoring.register_callback(
+            sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.LINE, self.line_handler
+        )
+        atexit.register(
+            lambda: sys.monitoring.free_tool_id(sys.monitoring.OPTIMIZER_ID)
+        )
 
-    def log(lvl, *args):
-        if verbosity >= lvl:
+        self.log(1, "[install_hooks] hooks installed!")
+
+    def log(self, lvl, *args):
+        if self.verbosity >= lvl:
             # TODO use logging module
             print(" ", *args, file=sys.stderr)
 
-    def should_capture(v: Any) -> bool:
+    def should_capture(self, v: Any) -> bool:
         sz = sys.getsizeof(v)
-        if sz < min_capture_size:
+        if sz < self.min_obj_size:
             return False
         m = inspect.getmodule(type(v))
         if m is None:
@@ -48,74 +70,51 @@ def install_hooks(tracee: str, args: CheckpointArgs):
                 return True
         return module_name.startswith("pandas") or module_name.startswith("numpy")
 
-    last_save = None
-
-    def ready_to_capture():
-        if frequency or last_save is None:
+    def ready_to_capture(self):
+        if not self.frequency or self.last_save is None:
             return True
         now = time.time() * 1000
-        if (now - last_save) >= frequency:
+        if (now - self.last_save * 1000) >= self.frequency:
             return True
 
-    def save(line_number, objs):
-        nonlocal last_save
+    def save(self, line_number, objs):
         ts = time.time()
-        fname = f"chkpt.{file_prefix}.{line_number}@{ts}.pkl"
+        fname = f"chkpt.{self.file_prefix}.{line_number}@{ts}.pkl"
         for k in objs:
-            log(1, f"  [save] {k} @ {ts} -> {fname}")
-        with open(args.output_dir / fname, "wb") as f:
+            self.log(1, f"  [save] {k} @ {ts} -> {fname}")
+        with open(self.output_dir / fname, "wb") as f:
             pickle.dump(objs, f)
-        last_save = ts
+        self.last_save = ts
 
-    def line_handler(code: CodeType, line_number: int) -> Any:
-        if code.co_filename != tracee or not ready_to_capture():
+    def line_handler(self, code: CodeType, line_number: int) -> Any:
+        self.ready_to_capture()
+        if code.co_filename != self.tracee or not self.ready_to_capture():
             return
-        log(1, "[line_handler]", code, line_number)
+        self.log(1, "[line_handler]", code, line_number)
         try:
             cf = inspect.currentframe()
             assert cf
             assert cf.f_back
             to_save = {}
             for n, v in cf.f_back.f_globals.items():
-                if should_capture(v):
-                    log(1, "  [global] add", n)
+                if self.should_capture(v):
+                    self.log(1, "  [global] add", n)
                     to_save[n] = v
                 else:
-                    log(1, "  [global] skip", n)
+                    self.log(2, "  [global] skip", n)
             for n, v in cf.f_back.f_locals.items():
                 if n in cf.f_back.f_globals:
                     continue
-                if should_capture(v):
-                    log(2, "  [local] add", n)
+                if self.should_capture(v):
+                    self.log(1, "  [local] add", n)
                     if n in to_save:
-                        log(2, "    overwrite!", n)
+                        self.log(1, "    overwrite!", n)
                     to_save[n] = v
                 else:
-                    log(2, "  [local] skip", n)
-            save(line_number, to_save)
+                    self.log(2, "  [local] skip", n)
+            self.save(line_number, to_save)
         except Exception as e:
             raise e
-
-    sys.monitoring.use_tool_id(sys.monitoring.OPTIMIZER_ID, "dbg")
-    sys.monitoring.set_events(
-        sys.monitoring.OPTIMIZER_ID,
-        sys.monitoring.events.PY_START
-        | sys.monitoring.events.PY_RETURN
-        | sys.monitoring.events.LINE,
-    )
-    # TODO capture at the end of execution
-    # sys.monitoring.register_callback(
-    #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_START, handler
-    # )
-    # sys.monitoring.register_callback(
-    #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_RETURN, ret_handler
-    # )
-    sys.monitoring.register_callback(
-        sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.LINE, line_handler
-    )
-    atexit.register(lambda: sys.monitoring.free_tool_id(sys.monitoring.OPTIMIZER_ID))
-
-    log(1, "[install_hooks] hooks installed!")
 
 
 if __name__ == "__main__":
@@ -133,10 +132,6 @@ if __name__ == "__main__":
         "--verbose", "-v", help="verbosity level", action="count", default=0
     )
     args, rest = parser.parse_known_args()
-
-    cargs = CheckpointArgs(
-        args.min_obj_size, args.output_dir, args.frequency, args.verbose
-    )
 
     if rest[0] == "--":
         rest = rest[1:]
@@ -162,5 +157,9 @@ if __name__ == "__main__":
         "__cached__": None,
     }
 
-    install_hooks(progname, cargs)
+    chkpt = Checkpoint(
+        progname, args.min_obj_size, args.output_dir, args.frequency, args.verbose
+    )
+    chkpt.install()
+
     exec(code, globs, None)
