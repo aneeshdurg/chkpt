@@ -27,13 +27,12 @@ def install_hooks(tracee: str, args: CheckpointArgs):
 
     os.system(f"mkdir -p {args.output_dir}")
 
-    # TODO - custom output dir
     file_prefix = urllib.parse.quote_plus(tracee)
 
     def log(lvl, *args):
         if verbosity >= lvl:
-            # TODO - real logging with controllable verbosity
-            print(" ", *args)
+            # TODO use logging module
+            print(" ", *args, file=sys.stderr)
 
     def should_capture(v: Any) -> bool:
         sz = sys.getsizeof(v)
@@ -69,7 +68,7 @@ def install_hooks(tracee: str, args: CheckpointArgs):
         last_save = ts
 
     def line_handler(code: CodeType, line_number: int) -> Any:
-        if code.co_filename != tracee:
+        if code.co_filename != tracee or not ready_to_capture():
             return
         log(1, "[line_handler]", code, line_number)
         try:
@@ -104,6 +103,7 @@ def install_hooks(tracee: str, args: CheckpointArgs):
         | sys.monitoring.events.PY_RETURN
         | sys.monitoring.events.LINE,
     )
+    # TODO capture at the end of execution
     # sys.monitoring.register_callback(
     #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_START, handler
     # )
