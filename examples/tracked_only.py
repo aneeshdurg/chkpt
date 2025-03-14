@@ -1,15 +1,26 @@
+import sys
 import random
 from time import sleep
-import pickle
+from dataclasses import dataclass, field
 
 from chkpt import Checkpoint
-from dep import State
+
+
+@dataclass
+class State:
+    x: list[int] = field(default_factory=list)
+
+print('usr.__main__', sys.modules['__main__'])
+print(State.__module__)
 
 
 state = State()
 
 try:
     chkpt = Checkpoint.get_global_singleton()
+    # Prevent automatic snapshotting
+    chkpt.frequency = -1
+    chkpt.min_obj_size = -1
 except AssertionError:
     chkpt = None
 if chkpt:

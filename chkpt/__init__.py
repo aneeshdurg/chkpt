@@ -98,6 +98,10 @@ class Checkpoint:
         if any(x is v for x in self.tracked_objects):
             return True
 
+        # sys.getsizeof is not guaranteed to be the best method for all object
+        # types (especially those that allocate via external libraries), but
+        # some libraries like numpy implement __sizeof__ to report the number of
+        # bytes that the object actually occupies.
         if self.min_obj_size < 0 or (
             self.min_obj_size > 0 and sys.getsizeof(v) < self.min_obj_size
         ):
