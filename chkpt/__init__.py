@@ -8,7 +8,7 @@ import pickle
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import CodeType
+from types import CodeType, ModuleType
 from typing import Any, Union
 
 
@@ -33,6 +33,8 @@ class Checkpoint:
     frequency: int
     verbosity: int
 
+    main_mod: ModuleType = sys.modules["__main__"]
+
     file_prefix: str = ""
     last_save: float | None = None
 
@@ -42,16 +44,12 @@ class Checkpoint:
     )
 
     _capture_on_next_line: bool = False
-    _globals: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def get_global_singleton(cls) -> "Checkpoint":
         global global_chkpt_instance
         assert global_chkpt_instance is not None
         return global_chkpt_instance
-
-    def set_globals(self, glbls: dict[str, Any]):
-        self._globals = glbls
 
     def __post_init__(self):
         self.file_prefix = urllib.parse.quote_plus(self.tracee)
@@ -137,37 +135,18 @@ class Checkpoint:
         for k in objs:
             self.log(1, f"  [save] {k} @ {ts} -> {fname}")
         with open(self.output_dir / fname, "wb") as f:
-            # We need to patch the main module definition here so that pickle
-            # can use any classes defined in the user code. This way of doing
-            # things does mean that pickle will be broken in user code. The real
-            # fix we need is to create a new module and set __main__ to be this
-            # new module before we execute the user code. But it's a little
-            # tricky because we need to execute the code in the context of this
-            # new module.
-            # I think* the right way to do this is to execute the code via
-            # spec.loader.exec_module with the name set to "__main__" instead of
-            # doing exec _after_ chkpt.install.
-
+            # pickle will lookup class/type definitions against the module the
+            # class/type was defined in. This creates a unique problem for
+            # classes defined in the __main__ module of the usercode (i.e. code
+            # in the file that is directly executed with chkpt). In order to
+            # correctly resolve those types, we need to ensure that pickle sees
+            # the same __main__ that the user code references.
             main_mod = sys.modules["__main__"]
-            main_glbls = main_mod.__dict__
-
-            # Turn the current main module into what the user code should see
-            old_glbls = copy.copy(main_glbls)
-            for k in old_glbls:
-                if k not in self._globals and k != "pickle" and k != "sys":
-                    del main_glbls[k]
-            main_glbls.update(self._globals)
-
-            pickle.dump(objs, f)
-
-            # Restore the main module
-            keys_to_del = []
-            for k in main_glbls:
-                if k not in old_glbls:
-                    keys_to_del.append(k)
-            for k in keys_to_del:
-                del main_glbls[k]
-            main_glbls.update(old_glbls)
+            sys.modules["__main__"] = self.main_mod
+            try:
+                pickle.dump(objs, f)
+            finally:
+                sys.modules["__main__"] = main_mod
         self.last_save = ts
 
     def snapshot(self, name: str):

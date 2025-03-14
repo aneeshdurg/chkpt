@@ -65,13 +65,23 @@ if __name__ == "__main__":
         "__package__": None,
         "__cached__": None,
     }
+    loader = importlib.machinery.SourceFileLoader("__main__", progname)
+    spec.loader = loader
+    module = importlib.util.module_from_spec(spec)
 
     chkpt = Checkpoint(
-        progname, args.min_obj_size, args.output_dir, args.frequency, args.verbose
+        progname,
+        args.min_obj_size,
+        args.output_dir,
+        args.frequency,
+        args.verbose,
+        main_mod=module,
     )
-
-    print('chkpt.__main__', sys.modules['__main__'])
-    chkpt.set_globals(glbls)
     chkpt.install()
 
-    exec(code, glbls, None)
+    # Execute the code within it's own __main__ module - this allows libraries
+    # like pickle to resolve imports against __main__ in the context of the
+    # usercode, and not this shim.
+    # Note that sys.modules["__main__"] in the user code will still point to the
+    # chkpt main module which could still have some issues.
+    spec.loader.exec_module(module)
