@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 import argparse
 import code
+import os
 import pickle
+import sys
+
+sys.path.append(os.getcwd())
 
 parser = argparse.ArgumentParser()
 parser.add_argument("pkl")
