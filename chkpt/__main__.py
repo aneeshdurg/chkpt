@@ -11,13 +11,33 @@ if __name__ == "__main__":
     import io
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--min-obj-size", "-z", type=int, default=1024 * 1024)
-    parser.add_argument("--output-dir", "-o", type=Path, default=Path("./checkpoints"))
     parser.add_argument(
-        "--frequency", "-f", type=int, help="frequency of checkpoints in ms", default=0
+        "--min-obj-size",
+        "-z",
+        type=int,
+        default=1024 * 1024,
+        help="Minimum size of object to capture. Pass 0 to capture all objects, and -1 to capture only tracked objects.",
     )
     parser.add_argument(
-        "--verbose", "-v", help="verbosity level", action="count", default=0
+        "--output-dir",
+        "-o",
+        type=Path,
+        default=Path("./checkpoints"),
+        help="Directory to place snapshots in.",
+    )
+    parser.add_argument(
+        "--frequency",
+        "-f",
+        type=int,
+        default=0,
+        help="Frequency of checkpoints in ms. Pass 0 to capture once per executed line, and -1 to only capture when explicitly requested.",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="count",
+        default=0,
+        help="Repeat to increase verbosity.",
     )
     args, rest = parser.parse_known_args()
 
