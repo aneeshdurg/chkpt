@@ -33,8 +33,6 @@ class Checkpoint:
     frequency: int
     verbosity: int
 
-    main_mod: ModuleType = sys.modules["__main__"]
-
     file_prefix: str = ""
     last_save: float | None = None
 
@@ -139,18 +137,7 @@ class Checkpoint:
         for k in objs:
             self.log(1, f"  [save] {k} @ {ts} -> {fname}")
         with open(self.output_dir / fname, "wb") as f:
-            # pickle will lookup class/type definitions against the module the
-            # class/type was defined in. This creates a unique problem for
-            # classes defined in the __main__ module of the usercode (i.e. code
-            # in the file that is directly executed with chkpt). In order to
-            # correctly resolve those types, we need to ensure that pickle sees
-            # the same __main__ that the user code references.
-            main_mod = sys.modules["__main__"]
-            sys.modules["__main__"] = self.main_mod
-            try:
-                pickle.dump(objs, f)
-            finally:
-                sys.modules["__main__"] = main_mod
+            pickle.dump(objs, f)
         self.last_save = ts
 
     def snapshot(self, name: str):
@@ -186,4 +173,69 @@ class Checkpoint:
         self.snapshot(str(line_number))
 
 
-__all__ = ["Checkpoint", "global_chkpt_instance"]
+def main():
+    import argparse
+    import importlib.machinery
+    import importlib.util
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--min-obj-size",
+        "-z",
+        type=int,
+        default=1024 * 1024,
+        help="Minimum size of object to capture. Pass 0 to capture all objects, and -1 to capture only tracked objects.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=Path,
+        default=Path("./checkpoints"),
+        help="Directory to place snapshots in.",
+    )
+    parser.add_argument(
+        "--frequency",
+        "-f",
+        type=int,
+        default=0,
+        help="Frequency of checkpoints in ms. Pass 0 to capture once per executed line, and -1 to only capture when explicitly requested.",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="count",
+        default=0,
+        help="Repeat to increase verbosity.",
+    )
+    args, rest = parser.parse_known_args()
+
+    if rest[0] == "--":
+        rest = rest[1:]
+    sys.argv = rest
+    progname = sys.argv[0]
+
+    sys.path.insert(0, os.path.dirname(progname))
+    spec = importlib.machinery.ModuleSpec(name="__main__", loader=None, origin=progname)
+    loader = importlib.machinery.SourceFileLoader("__main__", progname)
+    spec.loader = loader
+    module = importlib.util.module_from_spec(spec)
+
+    chkpt = Checkpoint(
+        progname,
+        args.min_obj_size,
+        args.output_dir,
+        args.frequency,
+        args.verbose,
+    )
+    chkpt.install()
+
+    # Execute the code within it's own __main__ module - this allows libraries
+    # like pickle to resolve imports against __main__ in the context of the
+    # usercode, and not this shim.
+    # Note that sys.modules["__main__"] in the user code will still point to the
+    # chkpt main module which could still have some issues.
+    sys.modules["__main__"] = module
+    spec.loader.exec_module(module)
+
+
+__all__ = ["Checkpoint", "global_chkpt_instance", "main"]

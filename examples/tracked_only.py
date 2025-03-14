@@ -2,6 +2,7 @@ import sys
 import random
 from time import sleep
 from dataclasses import dataclass, field
+import pickle
 
 from chkpt import Checkpoint
 
@@ -18,7 +19,7 @@ state = State()
 
 try:
     chkpt = Checkpoint.get_global_singleton()
-    # Prevent automatic snapshotting
+    # Prevent automatic snapshottinfrequencyg
     chkpt.frequency = -1
     chkpt.min_obj_size = -1
 except AssertionError:
@@ -29,6 +30,8 @@ if chkpt:
 for i in range(1000):
     state.x.append(random.randint(1, 1000))
     if (i % 100) == 0:
+        # even cProfile doesn't support pickling in user code :D
+        # print(pickle.dumps(state))
         if chkpt:
             chkpt.snapshot(f"iter{i}")
     sleep(0.05)
