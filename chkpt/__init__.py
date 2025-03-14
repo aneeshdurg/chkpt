@@ -58,6 +58,11 @@ class Checkpoint:
     def track(self, obj: Any):
         self.tracked_objects.append(obj)
 
+    def untrack(self, obj: Any):
+        self.tracked_objects = [
+            tracked for tracked in self.tracked_objects if tracked is not obj
+        ]
+
     def track_library(self, prefix: str):
         self.tracked_library_prefixes.append(prefix)
 
@@ -67,17 +72,9 @@ class Checkpoint:
         sys.monitoring.use_tool_id(sys.monitoring.OPTIMIZER_ID, "dbg")
         sys.monitoring.set_events(
             sys.monitoring.OPTIMIZER_ID,
-            sys.monitoring.events.PY_START
-            | sys.monitoring.events.PY_RETURN
-            | sys.monitoring.events.LINE,
+            sys.monitoring.events.LINE,
         )
-        # TODO capture at the end of execution
-        # sys.monitoring.register_callback(
-        #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_START, handler
-        # )
-        # sys.monitoring.register_callback(
-        #     sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.PY_RETURN, ret_handler
-        # )
+
         sys.monitoring.register_callback(
             sys.monitoring.OPTIMIZER_ID, sys.monitoring.events.LINE, self.line_handler
         )
