@@ -8,6 +8,7 @@ from . import Checkpoint
 if __name__ == "__main__":
     import argparse
     import importlib.machinery
+    import importlib.util
     import io
 
     parser = argparse.ArgumentParser()
@@ -57,7 +58,7 @@ if __name__ == "__main__":
     with io.open_code(progname) as fp:
         code = compile(fp.read(), progname, "exec")
     spec = importlib.machinery.ModuleSpec(name="__main__", loader=None, origin=progname)
-    globs = {
+    glbls = {
         "__spec__": spec,
         "__file__": spec.origin,
         "__name__": spec.name,
@@ -68,6 +69,9 @@ if __name__ == "__main__":
     chkpt = Checkpoint(
         progname, args.min_obj_size, args.output_dir, args.frequency, args.verbose
     )
+
+    print('chkpt.__main__', sys.modules['__main__'])
+    chkpt.set_globals(glbls)
     chkpt.install()
 
-    exec(code, globs, None)
+    exec(code, glbls, None)
